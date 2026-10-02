@@ -15,12 +15,29 @@ For each subscribed restaurant, the system:
 4. Provides seamless human escalation to branch staff when needed.
 5. Logs every call, records metrics, runs automated QA audits, and generates **client-ready daily/monthly usage and billing reports**.
 
-### Business & Operational Model
-- **Product Type:** B2B Voice AI SaaS / Managed Solution for F&B.
-- **Tenants:** Multiple independent restaurant brands/owners, each with one or more branches.
-- **Onboarding Speed:** Fast, template-driven onboarding. Adding a new restaurant requires zero code changes—only database configuration (menu, branches, phone mapping, prompt variables).
-- **Revenue & Margins:** Subscriptions + per-minute or per-order usage fee, tracking raw provider costs (Twilio + LLM + TTS/STT) against restaurant billing rates.
-- **Non-goals for MVP:** Outbound telemarketing, in-call credit card payments, delivery rider dispatch.
+### Business & Operational Model (1-to-1 Partner Relationship)
+- **Product Type:** B2B Managed Voice AI Platform & Reseller Solution.
+- **Stakeholders & Roles:**
+  1. **Platform Operator (You / Ahmed):**
+     - Manages the core backend infrastructure (VPS, Twilio, OpenAI Realtime, FastAPI, PostgreSQL, n8n).
+     - Deals **1-to-1** with the **Client (Operations Partner / Agency)**.
+     - Operates the **Master Operator Control Panel (`/operator`)** to add or remove restaurants, assign telephony numbers, and toggle restaurant access (`active` vs. `disabled`) as agreed when the client settles platform fees.
+     - **Full Operator Report Visibility & Automated Delivery:**
+       - All operational, financial, and audio reports reach the Operator directly.
+       - Operator dashboard and automated n8n notifications (WhatsApp/Email) deliver itemized cost reports: **AI Model Fees**, **Telephony Fees**, **Allocated Server Fees**, and **n8n Automation Fees** per restaurant, as well as call recordings, synced transcripts, live order feeds, and client payment tracking.
+  2. **The Client (Operations Partner / Agency):**
+     - Directly reaches, acquires, and manages relationships with restaurant brands.
+     - Collects payments directly from individual restaurants.
+     - Operates a dedicated **Client Admin & Reports Portal (`/reports`)** to:
+       - Monitor live call logs, audio recordings, order fulfillment, and accuracy metrics.
+       - Track itemized monthly cost reports for each restaurant: **AI model fees**, **Twilio telephony fees**, **allocated server fees**, and **n8n automation fees**.
+       - Track and record payment collection status from each restaurant.
+  3. **Restaurants (Tenants):**
+     - End restaurant brands and branches whose phone calls are answered in Egyptian Arabic dialect and dispatched to their kitchen/cashier.
+- **Onboarding & Service Control:** 
+  - Adding or removing restaurants is done via the Operator Control Panel or CLI without modifying code.
+  - When the client pays for a restaurant's onboarding or monthly service, the Operator enables the restaurant on the platform. If unpaid, the Operator toggles the restaurant to `disabled`, which automatically routes incoming calls directly to the restaurant's backup human staff number.
+- **Non-goals for MVP:** Public online credit card checkouts, outbound telemarketing, rider dispatch.
 
 ---
 
@@ -33,7 +50,7 @@ For each subscribed restaurant, the system:
 | **Autonomous Resolution** | ≥ 70% | Calls completed without human staff intervention |
 | **Response Latency** | < 1.5 s typical | Turn-around time from caller silence to speech response |
 | **New Tenant Onboarding Time** | < 30 minutes | From receiving menu/numbers to live test call |
-| **Cost & Margin Visibility** | 100% auditable | Every call maps exact provider costs to the respective tenant |
+| **Cost & Fee Auditability** | 100% itemized | Exact AI, telephony, server, and n8n cost attribution per restaurant |
 | **Wrong-Order Rate** | < 2% of total orders | Flagged and reported via automated post-call review |
 
 ---
@@ -59,28 +76,56 @@ For each subscribed restaurant, the system:
                  Multi-Tenant Voice Gateway (FastAPI)
       ┌──────────────────────────────────────────────────────────┐
       │ 1. Dynamic Tenant Resolution (Called Number -> Tenant)   │
-      │ 2. Hydrate Tenant Context (Menu, Prompts, Branch Staff)  │
-      │ 3. Voice AI Session (OpenAI Realtime / Gemini Live / Qwen)│
-      │ 4. Scoped Tools (Tenant-isolated menu search & cart)     │
+      │ 2. Operator Service Gate (Is restaurant active & paid?)  │
+      │ 3. Hydrate Tenant Context (Menu, Prompts, Branch Staff)  │
+      │ 4. Voice AI Session (OpenAI Realtime / Gemini Live / Qwen)│
+      │ 5. Scoped Tools (Tenant-isolated menu search & cart)     │
       └──────────────┬────────────────────────────┬──────────────┘
                      │                            │
                      ▼                            ▼
        PostgreSQL (Multi-Tenant DB)      Tenant Webhook / n8n
-     - restaurants (tenants)              ├─► WhatsApp (Restaurant A/B)
-     - branches                           ├─► Cashier / POS API
-     - menu_items & modifiers             ├─► Automated Call QA Review
-     - calls, orders & transcripts        └─► Tenant Daily & Monthly Reports
-     - per-tenant usage & billing
+     - restaurants & branches             ├─► WhatsApp (Restaurant A/B)
+     - menu_items & modifiers             ├─► Cashier / POS API
+     - calls, orders & transcripts        ├─► Automated Call QA Review
+     - per-restaurant itemized fees       └─► Daily & Monthly Partner Cost Reports
+       (AI + Telephony + Server + n8n)
 ```
 
-### Dynamic Tenant Resolution Flow
+### Dynamic Tenant Resolution & Service Gating Flow
 1. **Inbound Call:** Twilio sends a webhook request to `/voice` with `Called` (the dialed Twilio number) and `From` (customer's caller ID).
 2. **Tenant & Branch Lookup:** The gateway queries PostgreSQL to resolve which `restaurant_id` and `branch_id` own the dialed number.
-3. **Session Hydration:** The gateway initializes the session with:
+3. **Operator Service Gate:**
+   - The gateway verifies `restaurant.is_active`:
+     - **Active (Client paid / Approved):** Proceeds to initialize the AI voice assistant session.
+     - **Disabled (Unpaid / Suspended by Operator):** Bypasses AI voice model. Returns TwiML `<Dial>` forwarding directly to the branch's human staff backup line so the restaurant's callers are never dropped.
+4. **Session Hydration (if Active):** The gateway initializes the session with:
    - The restaurant's customized Egyptian dialect system prompt and rules (tone, brand name, recording disclaimer).
    - The restaurant's branch operational rules (delivery radius, working hours, minimum order).
    - Tool bindings scoped strictly to `restaurant_id` (so `get_menu` and `add_item` only access that restaurant's inventory).
-4. **Failsafe Redirection:** If the gateway is down, Twilio's fallback action immediately redirects the call to that specific branch's emergency staff phone number.
+5. **Failsafe Redirection:** If the gateway is down or errors, Twilio's fallback action immediately redirects the call to that specific branch's emergency staff phone number.
+
+### Dual Portals Architecture (Operator Control vs. Client Reporting)
+The platform provides two focused, role-based web dashboards with shared visibility into operational and cost accounting reports:
+
+```
+                                  Platform Access
+                                         │
+                 ┌───────────────────────┴───────────────────────┐
+                 ▼                                               ▼
+   Master Operator Panel (/operator)               Client Reports Portal (/reports)
+    [ Role: Platform Owner / Ahmed ]                [ Role: Client / Reseller Partner ]
+  ├─► Add / Remove / Edit Restaurants             ├─► Live Performance & Order Analytics
+  ├─► Service Status Toggle (Active vs Disabled)  ├─► Audio Playback & Synced Transcripts
+  │   (Controlled 1-to-1 based on client payment) ├─► Per-Restaurant Monthly Fee Breakdown:
+  ├─► Assign Twilio Numbers & Fallback Lines      │   • AI Model Fees (Tokens & Minutes in EGP)
+  ├─► Global Infrastructure & VPS Health          │   • Telephony Line Fees (Twilio minutes)
+  ├─► Full Access to ALL Restaurant Reports       │   • Allocated Server Hosting Fees (VPS)
+  │   (AI, Telephony, Server, and n8n fees)       │   • n8n Automation Fees
+  ├─► Monitor Restaurant Payment Status           │   • Total Monthly Cost per Restaurant
+  └─► Automated Digest to Operator                ├─► Track Restaurant Payment Status (Paid/Pending)
+      (WhatsApp/Email Daily & Monthly Summaries)  └─► Real-Time Menu Item Availability Toggle
+```
+
 
 ### High-Concurrency & Simultaneous Calls Architecture
 The platform is designed natively for high-throughput concurrency during peak lunch and dinner rushes:
@@ -127,14 +172,16 @@ The platform is designed natively for high-throughput concurrency during peak lu
 | **Secrets & Config** | `.env` + Secure Vault / DB Config | Global infrastructure credentials kept separate from per-tenant integration keys. |
 
 ### Recommended Production VPS Sizing
-- **Pilot Phase (1–3 Restaurants, up to 10 concurrent calls):**
-  - 4 vCPUs, 8 GB RAM, 80 GB NVMe SSD, 1 Gbps network port.
-  - Single-node Docker Compose with standalone n8n and Postgres.
+- **Pilot & Early Growth Phase (Target Setup: one.com Cloud Server M @ $9.99/mo):**
+  - **Specs:** 4 vCPUs, 8 GB RAM, 200 GB NVMe SSD, 1 Gbit/s bandwidth with unlimited traffic.
+  - **Operating System:** Clean Ubuntu 22.04/24.04 LTS (avoid installing Plesk to save 1–2 GB RAM for app workloads).
+  - **Capacity:** Handles 1–5 restaurant tenants and 15–30 concurrent active calls easily.
+  - **Services on host:** Single-node Docker Compose with Gateway (4 Uvicorn workers), Redis, n8n (Queue Mode), PostgreSQL, and Caddy.
 - **Commercial SaaS Scale (10–50 Restaurants, 50–200 concurrent calls):**
-  - 8–16 vCPUs, 16–32 GB RAM, 160 GB+ NVMe SSD.
+  - 8–16 vCPUs, 16–32 GB RAM, 300+ GB NVMe SSD.
   - Multi-worker gateway + Redis-backed n8n worker nodes + dedicated Postgres with connection pooling (`PgBouncer`).
 
-### Resource Optimization & Production Hardening (8 GB RAM / 80 GB NVMe)
+### Resource Optimization & Production Hardening (8 GB RAM / 200 GB NVMe)
 1. **n8n Memory Management:**
    - By default, n8n saves all execution data, which will quickly exhaust 8 GB RAM during heavy call volumes.
    - **Prune Execution Data:** Set `EXECUTIONS_DATA_PRUNE=true`.
@@ -147,8 +194,8 @@ The platform is designed natively for high-throughput concurrency during peak lu
    - **Maintenance Work Memory:** Set `maintenance_work_mem = 512MB`.
    - **Effective Cache Size:** Set `effective_cache_size = 6GB`.
 3. **Storage & I/O Protection:**
-   - An 80 GB NVMe drive provides excellent read/write speeds for database logging, but unconstrained container logs will deplete storage.
-   - **Docker Log Rotation:** Configure Docker's log-driver with `max-size=10m` and `max-file=3` across all services in `docker-compose.yml` to prevent logs from eating up disk space.
+   - The 200 GB NVMe drive on one.com provides excellent read/write throughput for database logging and sampled audio retention.
+   - **Docker Log Rotation:** Configure Docker's log-driver with `max-size=10m` and `max-file=3` across all services in `docker-compose.yml` to prevent logs from accumulating unchecked over time.
 
 ---
 
@@ -174,6 +221,13 @@ voice-ordering/
 │  │  └─ builder.py           # Injects tenant brand, greeting, recording notices, and rules
 │  ├─ billing.py              # Per-tenant cost calculation (telephony + token usage + platform markup)
 │  └─ db.py                   # Async database operations and tenant queries
+├─ portal/                    # Role-Based Web Dashboards
+│  ├─ main.py                 # FastAPI router serving /operator and /reports
+│  ├─ auth.py                 # Authentication & access guards (operator vs partner_admin)
+│  ├─ static/                 # CSS/JS (Tailwind CSS, charts, audio player)
+│  └─ templates/
+│     ├─ operator/            # Master Control (Ahmed): add/remove restaurants, toggle active status, assign numbers
+│     └─ partner/             # Client Reports Portal: per-restaurant monthly fee breakdown (AI, server, n8n, telephony), orders, audio playback
 ├─ db/
 │  ├─ migrations/             # Schema definitions and migrations
 │  └─ seed_tenant.py          # CLI script to bootstrap new restaurant menus and branches
@@ -191,26 +245,52 @@ voice-ordering/
 
 ## 6. Multi-Tenant Data Model
 
-Every operational table is scoped by `restaurant_id` to guarantee tenant isolation:
+Every operational table is scoped by `restaurant_id` to guarantee tenant isolation, with role-based access for the Platform Operator and the Reseller Partner:
 
 ```mermaid
 erDiagram
     RESTAURANTS ||--o{ BRANCHES : owns
     RESTAURANTS ||--o{ MENU_ITEMS : catalogs
+    RESTAURANTS ||--o{ MONTHLY_COST_REPORTS : generates
     BRANCHES ||--o{ CALLS : receives
     CALLS ||--o{ ORDERS : generates
     CALLS ||--o{ TRANSCRIPTS : records
     CALLS ||--o{ REVIEWS : evaluates
     CALLS ||--o{ USAGE_LOGS : tracks
 
+    USERS {
+        uuid id PK
+        string email
+        string password_hash
+        string full_name
+        string role "operator | partner_admin"
+        timestamp created_at
+    }
+
     RESTAURANTS {
         uuid id PK
         string name
         string slug
-        string status "active | suspended | trial"
+        boolean is_active "Toggled by Operator when Client pays"
+        decimal monthly_server_fee_egp "Allocated VPS server fee"
+        decimal monthly_n8n_fee_egp "Allocated n8n automation fee"
         jsonb config "prompts, tone, recording_notice, max_call_duration"
-        jsonb billing_settings "currency, rate_per_minute, plan"
         timestamp created_at
+    }
+
+    MONTHLY_COST_REPORTS {
+        uuid id PK
+        uuid restaurant_id FK
+        string billing_month "e.g., 2026-10"
+        integer total_calls
+        integer total_minutes
+        decimal ai_model_cost_egp "OpenAI/Gemini audio tokens & sessions"
+        decimal telephony_cost_egp "Twilio line rentals & per-minute call fees"
+        decimal server_fee_egp "Allocated VPS infrastructure share"
+        decimal n8n_fee_egp "Allocated workflow automation share"
+        decimal total_cost_egp "Sum of all fees for this restaurant"
+        string client_payment_status "paid | pending | overdue"
+        timestamp updated_at
     }
 
     BRANCHES {
@@ -356,10 +436,32 @@ erDiagram
   - Flags problematic calls for operational inspection.
 - Sample 10% of routine calls and 100% of escalated or flagged calls.
 
-### Phase 8: Tenant Reporting & Billing Engine
-- **Daily Performance Digest:** automated daily summary per restaurant (call volume, orders placed, handoff rate, peak order hours).
-- **Monthly Client Invoicing Report:** detailed consumption breakdown (minutes utilized, call count, cost per minute/call, platform fee in EGP).
-- Real-time internal gross margin dashboard comparing raw telephony + AI API costs against client billing.
+### Phase 8: Web Portals & Automated Report Delivery (Operator Panel & Client Portal)
+- **Master Operator Panel (`/operator` - Platform Owner / Ahmed):**
+  - Secure authentication for Ahmed.
+  - Restaurant Lifecycle Management: Add new restaurant, edit config, assign Twilio virtual numbers, and archive/delete.
+  - **Service Activation Toggle (`is_active`):**
+    - One-click switch to enable or disable any restaurant on the platform.
+    - Managed 1-to-1: Once the client settles platform fees with Ahmed, Ahmed activates the restaurant. If unpaid, Ahmed disables it.
+    - Configurable allocated baseline fees per restaurant (allocated VPS server fee, allocated n8n fee).
+  - **Master Analytics & Automated Delivery (Reaches Ahmed directly):**
+    - Full visibility across **all restaurants** on the platform.
+    - Automated n8n daily and monthly digests sent to Ahmed's WhatsApp/Email containing the complete aggregated and per-restaurant breakdowns.
+- **Client Reports Portal (`/reports` - Client / Operations Partner):**
+  - Secure login for the client/agency partner to inspect all restaurants they manage.
+- **Complete Feature Set Available to Both Operator & Client:**
+  1. **AI Model Fees:** Exact speech-to-speech audio token and session costs calculated in EGP.
+  2. **Telephony Fees:** Twilio call minutes and virtual number rentals.
+  3. **Server Hosting Fees:** Allocated share of the VPS hosting cost (e.g., share of one.com Cloud server M).
+  4. **n8n Automation Fees:** Allocated workflow and order execution costs.
+  5. **Total Monthly Cost:** Grand total for each restaurant so the client knows exactly what to charge them, and Ahmed knows total platform consumption.
+  6. **Restaurant Payment Status Tracking:** Overview of whether each restaurant has paid the client for the month (`paid` / `pending`).
+  7. **Performance & Call Analytics:** Live order feeds, conversion rates, call volume, average duration, and peak ordering hours.
+  8. **Call Audio & Synced Transcripts:** Embedded audio player to listen to recordings with synchronized Egyptian Arabic transcripts and QA flags.
+  9. **Live Menu Availability Manager:** Real-time switches to toggle items/modifiers `In Stock` / `Out of Stock` instantly without server restarts.
+- **Dynamic Inbound Call Gating:**
+  - Inbound calls check `restaurant.is_active`.
+  - If a restaurant is toggled `disabled`, the call immediately forwards to the branch's human staff backup number via TwiML `<Dial>` so customers can still place their order with staff.
 
 ### Phase 9: Multi-Scenario Benchmark & Concurrent Load Testing
 - Execute 50+ scripted Egyptian Arabic test calls across different restaurant profiles (e.g., Fast Food, Koshary, Grill/BBQ, Cafe).
@@ -392,6 +494,7 @@ erDiagram
 ## 9. Quality & Readiness Checklist
 
 - [ ] Inbound calls to different Twilio numbers resolve the correct restaurant brand and branch
+- [ ] Disabled restaurants automatically forward calls to human staff without launching AI voice session
 - [ ] Simultaneous calls to the *same* restaurant run without busy signals or cart bleeding
 - [ ] Concurrent calls across *different* restaurants maintain strict tenant isolation
 - [ ] Emergency fallback successfully dials branch staff if the AI gateway is unresponsive
@@ -402,8 +505,10 @@ erDiagram
 - [ ] n8n Redis queue absorbs high-burst order spikes without dropping payloads or exceeding WhatsApp rate limits
 - [ ] Human handoff smoothly transfers the call and logs the escalation reason
 - [ ] Post-call QA flags inaccurate orders and summarizes mismatch causes
-- [ ] Usage tracking calculates telephony and AI costs accurately per restaurant
-- [ ] Onboarding a new restaurant takes less than 30 minutes using the CLI tool
+- [ ] Operator panel (`/operator`) allows Ahmed to add/remove restaurants and toggle active status with 1 click
+- [ ] Client reports portal (`/reports`) displays accurate cost reports per restaurant (AI fees + server fees + n8n fees + telephony fees)
+- [ ] Client can track payment status (`paid` / `pending`) for each restaurant brand
+- [ ] Onboarding a new restaurant takes less than 30 minutes using the Operator UI or CLI tool
 
 ---
 
@@ -412,6 +517,7 @@ erDiagram
 | Risk | Impact | Mitigation Strategy |
 |---|---|---|
 | **Cross-Tenant Data Leakage** | Critical | Strict database constraints, tenant-scoped session factories, and automated multi-tenant regression tests. |
+| **Partner / Client Payment Delay** | Medium | Operator can immediately toggle the restaurant to `disabled`, gracefully routing calls to staff lines. |
 | **Telephony Line Availability in Egypt** | High | Support both Twilio international/local numbers and direct SIP Trunking (BYOC) with local Egyptian telecom providers. |
 | **High Model Audio Token Costs** | Medium | Keep AI system prompts and voice responses crisp; leverage prompt caching; use cheaper text models for post-call tasks. |
 | **Loud Background Noise in Calls** | Medium | Tune VAD (Voice Activity Detection) parameters and noise suppression thresholds on the audio stream. |
@@ -421,12 +527,14 @@ erDiagram
 
 ## 11. Core Deliverables
 
-1. **Multi-Tenant Voice Gateway:** Async FastAPI service supporting dynamic tenant routing and media streaming.
+1. **Multi-Tenant Voice Gateway:** Async FastAPI service supporting dynamic tenant routing, media streaming, and operator service gating.
 2. **Pluggable Voice AI Adapters:** Production integration with OpenAI Realtime, with evaluation benchmarks for Gemini Live and Qwen.
-3. **Tenant Onboarding Toolkit:** Automated CLI and validation scripts to import restaurant menus, aliases, and branches.
-4. **Order Dispatch & Notification System:** Ready-to-deploy n8n workflows for WhatsApp and POS order forwarding.
-5. **Auditing & Billing System:** Post-call QA analysis pipeline and automated client usage/billing reports.
-6. **Documentation & Runbooks:** Client onboarding SOP, incident handling guide, and production deployment configuration.
+3. **Master Operator Control Panel (`/operator`):** Control panel for Ahmed to add/remove restaurants, toggle active status, and assign phone numbers.
+4. **Client Reports Portal (`/reports`):** Agency partner dashboard tracking call performance, audio/transcripts, and monthly per-restaurant cost breakdowns (AI, telephony, server, and n8n fees).
+5. **Tenant Onboarding Toolkit:** Automated Operator UI and validation scripts to import restaurant menus, aliases, and branches.
+6. **Order Dispatch & Notification System:** Ready-to-deploy n8n workflows (Queue Mode) for WhatsApp and POS order forwarding.
+7. **Auditing & Billing Accounting System:** Post-call QA analysis pipeline and per-restaurant monthly cost attribution reports.
+8. **Documentation & Runbooks:** Client onboarding SOP, incident handling guide, and production deployment configuration.
 
 ---
 
